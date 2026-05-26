@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>中国象棋</title>
+<style>
+  :root {
+    --bg: #f5e6d3;
+    --board-bg: #e8d5b7;
+    --line: #4a3728;
+    --red: #c0392b;
+    --black: #1a1a2e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #2c2416;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-family: "Noto Serif SC", "SimSun", "STSong", "KaiTi", serif;
+    user-select: none;
+  }
+  #app {
+    background: #3d3221;
+    border-radius: 16px;
+    padding: 24px 28px 20px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    text-align: center;
+  }
+  h1 {
+    color: #d4b896;
+    font-size: 26px;
+    font-weight: normal;
+    letter-spacing: 6px;
+    margin-bottom: 8px;
+  }
+  #status {
+    color: #c9a87c;
+    font-size: 15px;
+    margin-bottom: 10px;
+    min-height: 22px;
+    transition: color 0.2s;
+  }
+  #status.check { color: #e74c3c; font-weight: bold; }
+  #status.win { color: #f1c40f; font-weight: bold; }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    cursor: pointer;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  }
+  #controls {
+    margin-top: 14px;
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+  button {
+    background: #5c4a32;
+    color: #d4b896;
+    border: 1px solid #7a6548;
+    padding: 8px 22px;
+    font-size: 15px;
+    font-family: inherit;
+    border-radius: 6px;
+    cursor: pointer;
+    letter-spacing: 2px;
+    transition: background 0.15s;
+  }
+  button:hover { background: #6d5a3f; }
+  button:active { background: #4a3a26; }
+  button:disabled { opacity: 0.4; cursor: default; }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>中 国 象 棋</h1>
+  <div id="status">红方走棋</div>
+  <canvas id="board"></canvas>
+  <div id="controls">
+    <button id="newGame">新游戏</button>
+    <button id="undo">悔棋</button>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 中国象棋 — Phase 1: 核心可玩（棋盘 + 规则 + 人人对战）
+// ============================================================
+
+// ==================== 常量 ====================
+const ROWS = 10, COLS = 9;
+const RED = 'red', BLACK = 'black';
+
+// 棋子类型
+const KING = 'king', ADVISOR = 'advisor', ELEPHANT = 'elephant';
+const KNIGHT = 'knight', ROOK = 'rook', CANNON = 'cannon', PAWN = 'pawn';
+
+// 棋子文字映射（红方/黑方使用不同字形）
+const PIECE_CHAR = {
+  [RED]:   { king: '帥', advisor: '仕', elephant: '相', knight: '傌', rook: '俥', cannon: '炮', pawn: '兵' },
+  [BLACK]: { king: '將', advisor: '士', elephant: '象', knight: '馬', rook: '車', cannon: '砲', pawn: '卒' },
+};
+
+// ==================== 棋盘绘制常量 ====================
+const CELL   = 62;        // 格子大小
+const PAD    = 44;        // 边距
+const RADIUS = 27;        // 棋子半径
+const CANVAS_W = PAD * 2 + (COLS - 1) * CELL;
+const CANVAS_H = PAD * 2 + (ROWS - 1) * CELL;
+
+const canvas = document.getElementById('board');
+const ctx    = canvas.getContext('2d');
+canvas.width  = CANVAS_W;
+canvas.height = CANVAS_H;
+
+// ==================== 游戏状态 ====================
+let board    = [];          // board[row][col] = null | { type, color }
+let turn     = RED;         // 当前走棋方
+let selected = null;        // { row, col } | null
+let validMoves = [];        // [{ row, col }]
+let moveHistory = [];       // [{ fromRow, fromCol, toRow, toCol, captured, prevTurn }]
+let gameOver = false;
+let winner   = null;        // RED | BLACK | null
+let inCheck  = false;       // 当前走棋方是否被将军
+
+// ==================== 棋盘初始化 ====================
+function createBoard() {
+  const b = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+
+  // 黑方底线 (row 0)
+  [ROOK, KNIGHT, ELEPHANT, ADVISOR, KING, ADVISOR, ELEPHANT, KNIGHT, ROOK]
+    .forEach((t, c) => b[0][c] = { type: t, color: BLACK });
+
+  // 黑方炮 (row 2)
+  b[2][1] = { type: CANNON, color: BLACK };
+  b[2][7] = { type: CANNON, color: BLACK };
+
+  // 黑方卒 (row 3)
+  for (let c = 0; c < COLS; c += 2) b[3][c] = { type: PAWN, color: BLACK };
+
+  // 红方兵 (row 6)
+  for (let c = 0; c < COLS; c += 2) b[6][c] = { type: PAWN, color: RED };
+
+  // 红方炮 (row 7)
+  b[7][1] = { type: CANNON, color: RED };
+  b[7][7] = { type: CANNON, color: RED };
+
+  // 红方底线 (row 9)
+  [ROOK, KNIGHT, ELEPHANT, ADVISOR, KING, ADVISOR, ELEPHANT, KNIGHT, ROOK]
+    .forEach((t, c) => b[9][c] = { type: t, color: RED });
+
+  return b;
+}
+
+// ==================== 工具函数 ====================
+const inBounds = (r, c) => r >= 0 && r < ROWS && c >= 0 && c < COLS;
+const pieceAt  = (r, c) => (inBounds(r, c) ? board[r][c] : null);
+const isEmpty  = (r, c) => pieceAt(r, c) === null;
+const isEnemy  = (r, c, color) => { const p = pieceAt(r, c); return p && p.color !== color; };
+const isFriend = (r, c, color) => { const p = pieceAt(r, c); return p && p.color === color; };
+
+// 红方在下方(row 7-9)，黑方在上方(row 0-2)
+const inPalace = (r, c, color) => {
+  if (color === BLACK) return r >= 0 && r <= 2 && c >= 3 && c <= 5;
+  return r >= 7 && r <= 9 && c >= 3 && c <= 5;
+};
+
+const crossedRiver = (r, color) => {
+  return color === RED ? r <= 4 : r >= 5;
+};
+
+// 正向：红方向上方(row减小)，黑方向下方(row增大)
+const forward = (color) => color === RED ? -1 : 1;
+
+// ==================== 深拷贝棋盘 ====================
+function cloneBoard(b) {
+  return b.map(row => row.map(cell => cell ? { ...cell } : null));
+}
+
+// ==================== 走法生成（伪合法，不含将军检测） ====================
+
+/** 将/帅：九宫内一步直行 */
+function kingMoves(r, c, color) {
+  const dirs = [[-1,0],[1,0],[0,-1],[0,1]];
+  return dirs
+    .map(([dr, dc]) => [r + dr, c + dc])
+    .filter(([nr, nc]) => inPalace(nr, nc, color) && !isFriend(nr, nc, color));
+}
+
+/** 仕/士：九宫内一步斜行 */
+function advisorMoves(r, c, color) {
+  const dirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
+  return dirs
+    .map(([dr, dc]) => [r + dr, c + dc])
+    .filter(([nr, nc]) => inPalace(nr, nc, color) && !isFriend(nr, nc, color));
+}
+
+/** 相/象：田字对角，不可过河，塞象眼检测 */
+function elephantMoves(r, c, color) {
+  const offsets = [
+    [-2,-2,-1,-1], [-2,2,-1,1], [2,-2,1,-1], [2,2,1,1]
+  ];
+  const moves = [];
+  for (const [dr, dc, er, ec] of offsets) {
+    const nr = r + dr, nc = c + dc;
+    const eyeR = r + er, eyeC = c + ec; // 象眼位置
+    if (!inBounds(nr, nc)) continue;
+    // 不可过河
+    if (crossedRiver(nr, color)) continue;
+    // 象眼被堵
+    if (!isEmpty(eyeR, eyeC)) continue;
+    if (!isFriend(nr, nc, color)) moves.push([nr, nc]);
+  }
+  return moves;
+}
+
+/** 馬/傌：日字形，蹩马腿检测 */
+function knightMoves(r, c, color) {
+  // [dr, dc, legR, legC] — leg 是马腿位置
+  const offsets = [
+    [-2,-1,-1, 0], [-2, 1,-1, 0],
+    [ 2,-1, 1, 0], [ 2, 1, 1, 0],
+    [-1,-2, 0,-1], [-1, 2, 0, 1],
+    [ 1,-2, 0,-1], [ 1, 2, 0, 1],
+  ];
+  const moves = [];
+  for (const [dr, dc, lr, lc] of offsets) {
+    const nr = r + dr, nc = c + dc;
+    if (!inBounds(nr, nc)) continue;
+    if (isFriend(nr, nc, color)) continue;
+    // 蹩马腿
+    if (!isEmpty(r + lr, c + lc)) continue;
+    moves.push([nr, nc]);
+  }
+  return moves;
+}
+
+/** 車/俥：直线任意格 */
+function rookMoves(r, c, color) {
+  return slidingMoves(r, c, color, [[-1,0],[1,0],[0,-1],[0,1]]);
+}
+
+/** 炮/砲：走直线；吃子需翻山 */
+function cannonMoves(r, c, color) {
+  const moves = [];
+  for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+    let nr = r + dr, nc = c + dc;
+    // 走子（不吃）：直行到第一个障碍前
+    while (inBounds(nr, nc) && isEmpty(nr, nc)) {
+      moves.push([nr, nc]);
+      nr += dr; nc += dc;
+    }
+    // 找炮架
+    if (!inBounds(nr, nc)) continue; // 出界
+    // 跳过炮架
+    nr += dr; nc += dc;
+    while (inBounds(nr, nc) && isEmpty(nr, nc)) {
+      nr += dr; nc += dc;
+    }
+    // 炮架后有敌方棋子 → 可吃
+    if (inBounds(nr, nc) && isEnemy(nr, nc, color)) {
+      moves.push([nr, nc]);
+    }
+  }
+  return moves;
+}
+
+/** 兵/卒：未过河只能前进；过河可左右前 */
+function pawnMoves(r, c, color) {
+  const f = forward(color);
+  const moves = [];
+  const fr = r + f;
+  if (inBounds(fr, c) && !isFriend(fr, c, color)) {
+    moves.push([fr, c]);
+  }
+  if (crossedRiver(r, color)) {
+    for (const dc of [-1, 1]) {
+      const nc = c + dc;
+      if (inBounds(r, nc) && !isFriend(r, nc, color)) {
+        moves.push([r, nc]);
+      }
+    }
+  }
+  return moves;
+}
+
+/** 直线滑动（車将帅用） */
+function slidingMoves(r, c, color, dirs) {
+  const moves = [];
+  for (const [dr, dc] of dirs) {
+    let nr = r + dr, nc = c + dc;
+    while (inBounds(nr, nc)) {
+      if (isEmpty(nr, nc)) {
+        moves.push([nr, nc]);
+      } else {
+        if (isEnemy(nr, nc, color)) moves.push([nr, nc]);
+        break;
+      }
+      nr += dr; nc += dc;
+    }
+  }
+  return moves;
+}
+
+// ==================== 伪合法走法分发 ====================
+function pseudoLegalMoves(r, c) {
+  const piece = pieceAt(r, c);
+  if (!piece) return [];
+  const { type, color } = piece;
+  switch (type) {
+    case KING:    return kingMoves(r, c, color);
+    case ADVISOR: return advisorMoves(r, c, color);
+    case ELEPHANT:return elephantMoves(r, c, color);
+    case KNIGHT:  return knightMoves(r, c, color);
+    case ROOK:    return rookMoves(r, c, color);
+    case CANNON:  return cannonMoves(r, c, color);
+    case PAWN:    return pawnMoves(r, c, color);
+    default:      return [];
+  }
+}
+
+// ==================== 查找王的位置 ====================
+function findKing(b, color) {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const p = b[r][c];
+      if (p && p.type === KING && p.color === color) return { row: r, col: c };
+    }
+  }
+  return null; // 不应发生
+}
+
+// ==================== 飞将检测（将帅对面） ====================
+function kingsAreFacing(b) {
+  const redKing  = findKing(b, RED);
+  const blackKing = findKing(b, BLACK);
+  if (!redKing || !blackKing) return false;
+  if (redKing.col !== blackKing.col) return false;
+
+  const minR = Math.min(redKing.row, blackKing.row);
+  const maxR = Math.max(redKing.row, blackKing.row);
+  for (let r = minR + 1; r < maxR; r++) {
+    if (b[r][redKing.col] !== null) return false;
+  }
+  return true; // 同列无遮挡 → 飞将
+}
+
+// ==================== 某方是否被将军 ====================
+function isKingInCheck(b, color) {
+  const king = findKing(b, color);
+  if (!king) return false;
+
+  const opponentColor = color === RED ? BLACK : RED;
+  // 检查对方所有棋子是否攻击到王
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const p = b[r][c];
+      if (!p || p.color !== opponentColor) continue;
+
+      // 复用伪合法走法：如果对方棋子的伪合法走法中包含王的位置 → 将军
+      const savedBoard = board; // 暂存引用
+      board = b;                // 临时切换到检查用棋盘
+      const moves = pseudoLegalMoves(r, c);
+      board = savedBoard;
+
+      if (moves.some(([mr, mc]) => mr === king.row && mc === king.col)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ==================== 模拟走子并检查是否合规 ====================
+function simulateMove(b, fromR, fromC, toR, toC) {
+  const newBoard = cloneBoard(b);
+  newBoard[toR][toC] = newBoard[fromR][fromC];
+  newBoard[fromR][fromC] = null;
+  return newBoard;
+}
+
+function isMoveLegal(fromR, fromC, toR, toC) {
+  const piece = board[fromR][fromC];
+  if (!piece) return false;
+
+  // 模拟走子
+  const newBoard = simulateMove(board, fromR, fromC, toR, toC);
+
+  // 走后不能让自己的王被将军
+  if (isKingInCheck(newBoard, piece.color)) return false;
+
+  // 走后不能飞将
+  if (kingsAreFacing(newBoard)) return false;
+
+  return true;
+}
+
+// ==================== 获取所有合法走法 ====================
+function getLegalMoves(r, c) {
+  return pseudoLegalMoves(r, c).filter(([tr, tc]) => isMoveLegal(r, c, tr, tc));
+}
+
+// ==================== 判定将死 / 困毙 ====================
+function hasAnyLegalMove(b, color) {
+  const savedBoard = board;
+  board = b;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const p = b[r][c];
+      if (!p || p.color !== color) continue;
+      const moves = getLegalMoves(r, c);
+      if (moves.length > 0) {
+        board = savedBoard;
+        return true;
+      }
+    }
+  }
+  board = savedBoard;
+  return false;
+}
+
+function checkGameEnd() {
+  const opponent = turn === RED ? BLACK : RED;
+  inCheck = isKingInCheck(board, turn);
+
+  if (!hasAnyLegalMove(board, turn)) {
+    gameOver = true;
+    winner = opponent;
+    return true;
+  }
+  return false;
+}
+
+// ==================== 走子 ====================
+function makeMove(fromR, fromC, toR, toC) {
+  const piece = board[fromR][fromC];
+  const captured = board[toR][toC];
+
+  moveHistory.push({
+    fromRow: fromR, fromCol: fromC,
+    toRow: toR, toCol: toC,
+    captured: captured ? { type: captured.type, color: captured.color } : null,
+    prevTurn: turn,
+    prevInCheck: inCheck,
+  });
+
+  board[toR][toC] = piece;
+  board[fromR][fromC] = null;
+
+  // 切换走棋方
+  turn = turn === RED ? BLACK : RED;
+
+  // 检查终局
+  checkGameEnd();
+}
+
+// ==================== 悔棋 ====================
+function undoMove() {
+  if (gameOver) {
+    // 允许在终局后撤销
+    gameOver = false;
+    winner = null;
+  }
+  if (moveHistory.length === 0) return;
+
+  const last = moveHistory.pop();
+  board[last.fromRow][last.fromCol] = board[last.toRow][last.toCol];
+  board[last.toRow][last.toCol] = last.captured
+    ? { type: last.captured.type, color: last.captured.color }
+    : null;
+  turn = last.prevTurn;
+  inCheck = last.prevInCheck;
+}
+
+// ==================== 渲染 ====================
+function pixel(r, c) {
+  return { x: PAD + c * CELL, y: PAD + r * CELL };
+}
+
+function drawBoard() {
+  // 背景
+  ctx.fillStyle = '#e8d5b7';
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  // 外框
+  ctx.strokeStyle = '#4a3728';
+  ctx.lineWidth = 2.5;
+  const x0 = PAD, y0 = PAD;
+  const x1 = PAD + (COLS - 1) * CELL;
+  const y1 = PAD + (ROWS - 1) * CELL;
+  ctx.strokeRect(x0 - 2, y0 - 2, x1 - x0 + 4, y1 - y0 + 4);
+
+  ctx.strokeStyle = '#5c4633';
+  ctx.lineWidth = 1;
+
+  // 横线
+  for (let r = 0; r < ROWS; r++) {
+    const y = PAD + r * CELL;
+    ctx.beginPath();
+    ctx.moveTo(PAD, y);
+    ctx.lineTo(PAD + (COLS - 1) * CELL, y);
+    ctx.stroke();
+  }
+
+  // 竖线（边线贯通，内线在河界断开）
+  for (let c = 0; c < COLS; c++) {
+    const x = PAD + c * CELL;
+    if (c === 0 || c === COLS - 1) {
+      // 边线贯通
+      ctx.beginPath();
+      ctx.moveTo(x, PAD);
+      ctx.lineTo(x, PAD + (ROWS - 1) * CELL);
+      ctx.stroke();
+    } else {
+      // 上半
+      ctx.beginPath();
+      ctx.moveTo(x, PAD);
+      ctx.lineTo(x, PAD + 4 * CELL);
+      ctx.stroke();
+      // 下半
+      ctx.beginPath();
+      ctx.moveTo(x, PAD + 5 * CELL);
+      ctx.lineTo(x, PAD + (ROWS - 1) * CELL);
+      ctx.stroke();
+    }
+  }
+
+  // 九宫斜线
+  drawPalaceDiag(BLACK); // 上方
+  drawPalaceDiag(RED);   // 下方
+
+  // 楚河汉界
+  ctx.fillStyle = '#4a3728';
+  ctx.font = 'bold 18px "KaiTi", "STKaiti", "Noto Serif SC", serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const riverY = PAD + 4.5 * CELL;
+  const leftX  = PAD + 1.5 * CELL;
+  const rightX = PAD + (COLS - 2.5) * CELL;
+  ctx.fillText('楚  河', leftX, riverY);
+  ctx.fillText('漢  界', rightX, riverY);
+}
+
+function drawPalaceDiag(color) {
+  const topR = color === BLACK ? 0 : 7;
+  const botR = color === BLACK ? 2 : 9;
+  const c1 = PAD + 3 * CELL, c2 = PAD + 5 * CELL;
+  const r1 = PAD + topR * CELL, r2 = PAD + botR * CELL;
+
+  ctx.strokeStyle = '#5c4633';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(c1, r1); ctx.lineTo(c2, r2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(c2, r1); ctx.lineTo(c1, r2);
+  ctx.stroke();
+}
+
+function drawPieces() {
+  // 先画棋子
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const p = board[r][c];
+      if (!p) continue;
+      const isSel = selected && selected.row === r && selected.col === c;
+      drawPiece(r, c, p, isSel);
+    }
+  }
+}
+
+function drawPiece(r, c, piece, isSel) {
+  const { x, y } = pixel(r, c);
+  const char = PIECE_CHAR[piece.color][piece.type];
+
+  // 棋子阴影
+  ctx.beginPath();
+  ctx.arc(x + 2, y + 2, RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fill();
+
+  // 棋子主体
+  ctx.beginPath();
+  ctx.arc(x, y, RADIUS, 0, Math.PI * 2);
+  const grad = ctx.createRadialGradient(x - 6, y - 8, 2, x, y, RADIUS);
+  grad.addColorStop(0, '#fdf5e6');
+  grad.addColorStop(0.7, '#e8d5b7');
+  grad.addColorStop(1, '#c4a97d');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // 边框
+  ctx.strokeStyle = isSel ? '#e67e22' : '#5c4633';
+  ctx.lineWidth = isSel ? 3 : 1.8;
+  ctx.stroke();
+
+  // 内圈
+  ctx.beginPath();
+  ctx.arc(x, y, RADIUS - 4, 0, Math.PI * 2);
+  ctx.strokeStyle = isSel ? '#e67e22' : '#8b7355';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // 选中高亮
+  if (isSel) {
+    ctx.beginPath();
+    ctx.arc(x, y, RADIUS + 4, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(230, 126, 34, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // 文字
+  ctx.fillStyle = piece.color === RED ? '#c0392b' : '#1a1a2e';
+  ctx.font = `bold 24px "KaiTi", "STKaiti", "Noto Serif SC", "SimSun", serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(char, x, y + 1);
+}
+
+function drawValidMoves() {
+  for (const { row, col } of validMoves) {
+    const { x, y } = pixel(row, col);
+    const hasEnemy = pieceAt(row, col) !== null;
+    if (hasEnemy) {
+      // 吃子目标：红色半透明圈
+      ctx.beginPath();
+      ctx.arc(x, y, RADIUS + 3, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(200, 50, 50, 0.55)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    } else {
+      // 空位：小绿点
+      ctx.beginPath();
+      ctx.arc(x, y, 9, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(46, 139, 87, 0.55)';
+      ctx.fill();
+    }
+  }
+}
+
+function render() {
+  drawBoard();
+  drawValidMoves();
+  drawPieces();
+  updateStatus();
+}
+
+function updateStatus() {
+  const el = document.getElementById('status');
+  el.className = '';
+
+  if (gameOver) {
+    const name = winner === RED ? '红方' : '黑方';
+    el.textContent = `${name}获胜！`;
+    el.className = 'win';
+  } else if (inCheck) {
+    const name = turn === RED ? '红方' : '黑方';
+    el.textContent = `${name}走棋 — 将军！`;
+    el.className = 'check';
+  } else {
+    const name = turn === RED ? '红方' : '黑方';
+    el.textContent = `${name}走棋`;
+  }
+}
+
+// ==================== 事件处理 ====================
+canvas.addEventListener('click', (e) => {
+  if (gameOver) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = CANVAS_W / rect.width;
+  const scaleY = CANVAS_H / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top) * scaleY;
+
+  const col = Math.round((mx - PAD) / CELL);
+  const row = Math.round((my - PAD) / CELL);
+
+  if (!inBounds(row, col)) {
+    // 点击棋盘外 → 取消选择
+    clearSelection();
+    return;
+  }
+
+  handleClick(row, col);
+});
+
+function handleClick(row, col) {
+  const piece = pieceAt(row, col);
+
+  // 情况1：已选中且点击的是合法目标 → 走子
+  if (selected) {
+    const isTarget = validMoves.some(m => m.row === row && m.col === col);
+    if (isTarget) {
+      makeMove(selected.row, selected.col, row, col);
+      clearSelection();
+      render();
+      return;
+    }
+  }
+
+  // 情况2：点击己方棋子 → 选中
+  if (piece && piece.color === turn) {
+    selectPiece(row, col);
+    return;
+  }
+
+  // 情况3：点击敌方棋子/空位但非合法目标 → 取消选择
+  clearSelection();
+  render();
+}
+
+function selectPiece(row, col) {
+  selected = { row, col };
+  const moves = getLegalMoves(row, col);
+  validMoves = moves.map(([r, c]) => ({ row: r, col: c }));
+  render();
+}
+
+function clearSelection() {
+  selected = null;
+  validMoves = [];
+}
+
+// ==================== 按钮事件 ====================
+document.getElementById('newGame').addEventListener('click', () => {
+  board = createBoard();
+  turn = RED;
+  selected = null;
+  validMoves = [];
+  moveHistory = [];
+  gameOver = false;
+  winner = null;
+  inCheck = false;
+  render();
+});
+
+document.getElementById('undo').addEventListener('click', () => {
+  if (moveHistory.length === 0) return;
+  clearSelection();
+  undoMove();
+  render();
+});
+
+// ==================== 键盘快捷键 ====================
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.key === 'z') {
+    e.preventDefault();
+    document.getElementById('undo').click();
+  }
+  if (e.ctrlKey && e.key === 'n') {
+    e.preventDefault();
+    document.getElementById('newGame').click();
+  }
+});
+
+// ==================== 启动 ====================
+board = createBoard();
+render();
+</script>
+</body>
+</html>
