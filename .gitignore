@@ -1,0 +1,158 @@
+# ============================================================
+# 敏感信息 — 绝对禁止提交
+# ============================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+*-secret.yaml
+*-secrets.yaml
+secrets.yaml
+secrets.yml
+credentials*
+*.cred
+*.credentials
+service-account*.json
+*_rsa
+*_ecdsa
+*_ed25519
+id_rsa*
+id_ecdsa*
+id_ed25519*
+
+# 令牌 & 密钥文件
+.envrc
+.direnv/
+.secrets/
+.vault-password
+ansible-vault-password*
+
+# ============================================================
+# 依赖
+# ============================================================
+node_modules/
+bower_components/
+vendor/
+.gradle/
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+.eggs/
+dist/
+*.whl
+Pipfile.lock
+poetry.lock
+*.class
+*.jar
+*.war
+target/
+
+# ============================================================
+# 构建产物
+# ============================================================
+build/
+out/
+dist/
+.next/
+.nuxt/
+.cache/
+*.tsbuildinfo
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.app
+
+# ============================================================
+# IDE & 编辑器
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+.project
+.classpath
+.settings/
+*.iml
+
+# ============================================================
+# 操作系统
+# ============================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+Icon?
+
+# ============================================================
+# 日志 & 临时文件
+# ============================================================
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+*.orig
+logs/
+tmp/
+temp/
+*.swp
+*.swo
+
+# ============================================================
+# 数据库 & 本地数据
+# ============================================================
+*.sqlite
+*.sqlite3
+*.db
+*.mdb
+*.accdb
+*.dump
+*.rdb
+data/
+dump.rdb
+
+# ============================================================
+# 覆盖率 & 测试
+# ============================================================
+coverage/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+
+# ============================================================
+# Docker & 容器
+# ============================================================
+.docker/
+docker-compose.override.yml
+
+# ============================================================
+# 其他
+# ============================================================
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
