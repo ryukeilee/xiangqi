@@ -86,6 +86,29 @@
   button:hover { background: #6d5a3f; }
   button:active { background: #4a3a26; }
   button:disabled { opacity: 0.4; cursor: default; }
+  #move-list {
+    margin-top: 12px; max-height: 150px; overflow-y: auto;
+    background: #2e2418; border-radius: 6px; padding: 8px 14px;
+    text-align: left; font-size: 13px; color: #b89a7a;
+    font-family: "KaiTi","STKaiti","Noto Serif SC",serif;
+    line-height: 2; min-height: 36px;
+  }
+  #move-list .num { color: #7a6548; margin-right: 6px; }
+  #move-list .rm { color: #c0392b; }
+  #move-list .bm { color: #d4b896; }
+  #overlay {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.65); z-index: 10;
+    justify-content: center; align-items: center;
+  }
+  #overlay.show { display: flex; }
+  #modal {
+    background: #3d3221; border-radius: 14px; padding: 32px 44px;
+    text-align: center; box-shadow: 0 10px 36px rgba(0,0,0,0.55);
+  }
+  #modal h2 { color: #f1c40f; font-size: 26px; margin-bottom: 8px; font-weight: normal; }
+  #modal p  { color: #c9a87c; font-size: 14px; margin-bottom: 22px; }
+  #modal button { font-size: 16px; padding: 10px 32px; }
 </style>
 </head>
 <body>
@@ -112,6 +135,14 @@
     <button id="newGame">新游戏</button>
     <button id="undo">悔棋</button>
   </div>
+  <div id="move-list"></div>
+</div>
+<div id="overlay">
+  <div id="modal">
+    <h2 id="modal-title"></h2>
+    <p id="modal-sub"></p>
+    <button id="modal-restart">再来一局</button>
+  </div>
 </div>
 
 <script>
@@ -130,6 +161,30 @@ const PIECE_CHAR = {
   [RED]:   { king:'帥', advisor:'仕', elephant:'相', knight:'傌', rook:'俥', cannon:'炮', pawn:'兵' },
   [BLACK]: { king:'將', advisor:'士', elephant:'象', knight:'馬', rook:'車', cannon:'砲', pawn:'卒' },
 };
+
+// ==================== 棋谱记法 ====================
+const RED_COLS = ['九','八','七','六','五','四','三','二','一'];
+const BLK_COLS = ['1','2','3','4','5','6','7','8','9'];
+const CH_NUMS  = ['','一','二','三','四','五','六','七','八','九'];
+
+function moveNotation(fr, fc, tr, tc, piece) {
+  const red = piece.color === RED;
+  const cols = red ? RED_COLS : BLK_COLS;
+  const name = PIECE_CHAR[piece.color][piece.type];
+  let act, tgt;
+  if (fr === tr) {
+    act = '平'; tgt = cols[tc];
+  } else {
+    act = (red ? tr < fr : tr > fr) ? '進' : '退';
+    if (piece.type === KNIGHT || piece.type === ELEPHANT || piece.type === ADVISOR) {
+      tgt = cols[tc];
+    } else {
+      const s = Math.abs(tr - fr);
+      tgt = red ? (CH_NUMS[s] || String(s)) : String(s);
+    }
+  }
+  return name + cols[fc] + act + tgt;
+}
 
 // ==================== 棋盘绘制常量 ====================
 const CELL   = 62;
@@ -374,12 +429,15 @@ function makeMove(fr, fc, tr, tc) {
   const captured = board[tr][tc];
   moveHistory.push({
     fromRow:fr, fromCol:fc, toRow:tr, toCol:tc,
+    piece: { type: piece.type, color: piece.color },
     captured: captured ? { type:captured.type, color:captured.color } : null,
     prevTurn:turn, prevInCheck:inCheck,
   });
   board[tr][tc] = piece; board[fr][fc] = null;
   turn = turn === RED ? BLACK : RED;
-  checkGameEnd();
+  const ended = checkGameEnd();
+  updateMoveList();
+  if (ended) showModal();
 }
 
 // ==================== 悔棋 ====================
@@ -391,6 +449,7 @@ function undoMove() {
   board[m.toRow][m.toCol] = m.captured ? { type:m.captured.type, color:m.captured.color } : null;
   turn = m.prevTurn;
   inCheck = m.prevInCheck;
+  updateMoveList();
 }
 
 // ============================================================
@@ -624,7 +683,51 @@ function drawValidMoves() {
   }
 }
 
-function render() { drawBoard(); drawValidMoves(); drawPieces(); updateStatus(); }
+function drawCheckHighlight() {
+  if (!inCheck || gameOver) return;
+  const king = findKing(board, turn);
+  if (!king) return;
+  const { x, y } = pixel(king.row, king.col);
+  const t = performance.now() / 400;
+  const alpha = 0.35 + 0.25 * Math.sin(t * Math.PI);
+  ctx.beginPath();
+  ctx.arc(x, y, RADIUS + 5, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(220,40,40,${alpha})`;
+  ctx.lineWidth = 3.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, RADIUS + 6, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(255,80,80,${alpha * 0.5})`;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function render() {
+  drawBoard(); drawValidMoves();
+  drawCheckHighlight();
+  drawPieces();
+  updateStatus();
+}
+
+function updateMoveList() {
+  const el = document.getElementById('move-list');
+  if (moveHistory.length === 0) { el.innerHTML = ''; return; }
+  let html = '';
+  for (let i = 0; i < moveHistory.length; i += 2) {
+    const n = Math.floor(i / 2) + 1;
+    const r = moveHistory[i];
+    const rNot = moveNotation(r.fromRow, r.fromCol, r.toRow, r.toCol, r.piece);
+    html += '<span class="num">' + n + '.</span><span class="rm">' + rNot + '</span>';
+    if (i + 1 < moveHistory.length) {
+      const b = moveHistory[i + 1];
+      const bNot = moveNotation(b.fromRow, b.fromCol, b.toRow, b.toCol, b.piece);
+      html += '  <span class="bm">' + bNot + '</span>';
+    }
+    html += '<br>';
+  }
+  el.innerHTML = html;
+  el.scrollTop = el.scrollHeight;
+}
 
 function updateStatus() {
   const el = document.getElementById('status'); el.className = '';
@@ -633,8 +736,19 @@ function updateStatus() {
   else if (inCheck) { el.textContent = (turn === RED ? '红方' : '黑方') + '走棋 — 将军！'; el.className = 'check'; }
   else { el.textContent = (turn === RED ? '红方' : '黑方') + '走棋'; }
 
-  // 难度选择仅人机模式可见
   document.getElementById('diffLabel').style.display = gameMode === 'pvai' ? '' : 'none';
+}
+
+// ==================== 胜负弹窗 ====================
+function showModal() {
+  const name = winner === RED ? '红方' : '黑方';
+  document.getElementById('modal-title').textContent = '🎉 ' + name + '获胜！';
+  document.getElementById('modal-sub').textContent =
+    inCheck ? '将死' : '困毙（无子可动）';
+  document.getElementById('overlay').classList.add('show');
+}
+function hideModal() {
+  document.getElementById('overlay').classList.remove('show');
 }
 
 // ==================== 事件处理 ====================
@@ -681,8 +795,9 @@ function newGame() {
   selected = null; validMoves = []; moveHistory = [];
   gameOver = false; winner = null; inCheck = false;
   aiThinking = false;
+  hideModal();
+  updateMoveList();
   render();
-  // 人机模式中玩家执红，若AI执红则AI先走
   if (gameMode === 'pvai' && aiColor === RED) aiDoMove();
 }
 
@@ -718,6 +833,9 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key === 'z') { e.preventDefault(); document.getElementById('undo').click(); }
   if (e.ctrlKey && e.key === 'n') { e.preventDefault(); newGame(); }
 });
+
+// ==================== 弹窗按钮 ====================
+document.getElementById('modal-restart').addEventListener('click', newGame);
 
 // ==================== 启动 ====================
 board = createBoard();
